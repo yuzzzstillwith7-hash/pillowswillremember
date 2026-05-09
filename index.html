@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oneiros: 梦境生成器</title>
+    <!-- 新增：引入 html2canvas CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        /* --- 1. Dreamcore 基础样式 --- */
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@200;300&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #000000;
+            color: rgb(255, 255, 255);
+            font-family: 'Noto Serif SC', serif;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* --- 2. 文字特效：涟漪与散开 --- */
+        .char {
+            display: inline-block;
+            opacity: 0;
+            filter: blur(12px);
+            transform: translateY(20px);
+            transition: transform 2s cubic-bezier(0.2, 0, 0.2, 1), 
+                        opacity 2s cubic-bezier(0.2, 0, 0.2, 1),
+                        filter 2s;
+            will-change: transform, opacity, filter;
+            pointer-events: auto;
+        }
+        .char.visible {
+            opacity: 0.6;
+            filter: blur(1px);
+            transform: translateY(0);
+        }
+
+        /* --- 3. 页面容器 (高级画册级分栏布局) --- */
+        .page {
+            position: fixed;
+            inset: 0;
+            display: none;
+            z-index: 1;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            opacity: 0;
+            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* 第一页和第二页使用全黑背景，不使用背景图 */
+        #page-1, #page-0 {
+            background-color: #000000 !important;
+            background-image: none !important;
+        }
+        .page.active { 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: center; 
+            z-index: 2; 
+            opacity: 1;
+        }
+        
+        /* 分栏布局页面 - 极致不对称美感 */
+        .page-split {
+            display: flex !important;
+            flex-direction: row !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            padding: 80px 4% !important;
+            height: 100vh !important;
+        }
+        
+        /* 左侧标题 - 极端对齐 */
+        .side-title {
+            width: 30% !important;
+            padding-left: 0 !important;
+            margin-left: 0 !important;
+            text-align: left !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            align-self: stretch !important;
+        }
+        
+        /* 右侧内容 - 极端右倾 */
+        .right-content {
+            width: 65% !important;
+            margin-left: auto !important;
+            display: flex !important;
+            justify-content: flex-end !important;
+            align-items: center !important;
+            align-self: stretch !important;
+        }
+        
+        /* 返回按钮 - 左下角最边缘 */
+        .back-nav {
+            position: absolute !important;
+            bottom: 80px !important;
+            left: 4% !important;
+            z-index: 200 !important;
+        }
+        
+        /* 枕头网格 */
+        .pillow-grid {
+            display: grid !important;
+            grid-template-columns: repeat(5, 1fr) !important;
+            gap: 20px !important;
+            width: 90% !important;
+        }
+        
+        /* 决策按钮组 */
+        .choice-group {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 30px !important;
+            padding-right: 0 !important;
+        }
+
+        /* --- 4. 物件选择增强 (#page3) --- */
+        .item-cloud {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+            z-index: 5;
+        }
+        .item-wrapper {
+            position: absolute;
+            cursor: pointer;
+            transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            filter: grayscale(0.5) blur(2.5px) brightness(0.7);
+            transform: scale(0.8);
+            text-align: center;
+        }
+        .item-wrapper:hover {
+            filter: grayscale(0) blur(0px) brightness(1.2);
+            transform: scale(1.3) translateY(-15px);
+            z-index: 100;
+        }
+        .item-img { width: 100px; height: 100px; object-fit: contain; }
+        .item-label {
+            display: block;
+            font-size: 11px;
+            letter-spacing: 2px;
+            opacity: 0;
+            transition: opacity 0.5s;
+            color: rgba(255,255,255,0.8);
+            margin-top: 5px;
+        }
+        .item-wrapper:hover .item-label { opacity: 1; }
+
+        /* --- 5. 卧室场景 (#page4) --- */
+        .bedroom-scene {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: url('images/background/1.jpg') center/cover no-repeat;
+            transition: all 3s ease-in-out;
+            overflow: hidden;
+        }
+        
+        /* 灯的入场动画 */
+        .lamp-pull {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%) translateY(-100%);
+            height: 260px;
+            cursor: pointer;
+            z-index: 300;
+            animation: lampDrop 2.5s ease-out forwards 1.5s;
+            transition: opacity 1s ease-out;
+        }
+        
+        .lamp-pull svg {
+            filter: drop-shadow(0 0 15px rgba(255, 255, 200, 0.8)) drop-shadow(0 0 30px rgba(255, 255, 150, 0.5));
+        }
+        
+        /* 关灯提示文字 */
+        .lamp-hint {
+            transition: opacity 1s ease-out;
+        }
+        
+        @keyframes lampDrop {
+            0% {
+                transform: translateX(-50%) translateY(-100%);
+            }
+            60% {
+                transform: translateX(-50%) translateY(0);
+            }
+            80% {
+                transform: translateX(-50%) translateY(-3px);
+            }
+            90% {
+                transform: translateX(-50%) translateY(2px);
+            }
+            100% {
+                transform: translateX(-50%) translateY(0);
+            }
+        }
+        
+        /* 卧室变暗效果 - 4秒内使用filter变暗，保持背景图 */
+        .bedroom-scene.dark {
+            filter: brightness(0) saturate(0);
+            transition: filter 4s ease-in-out;
+        }
+
+        /* 浮动动画 */
+        @keyframes float {
+            0%,100% { transform: translate(0,0); }
+            33% { transform: translate(20px, -15px); }
+            66% { transform: translate(-15px, 20px); }
+        }
+
+        /* 加快关灯提示语的动画速度 */
+        .lamp-hint .char {
+            transition: transform 1s cubic-bezier(0.2, 0, 0.2, 1), 
+                        opacity 1s cubic-bezier(0.2, 0, 0.2, 1),
+                        filter 1s !important;
+        }
+
+        /* 枕头网格容器 */
+        .pillow-grid-container {
+            display: grid !important;
+            grid-template-columns: repeat(5, 1fr) !important;
+            gap: 20px !important;
+            width: 100% !important;
+            max-width: 800px !important;
+        }
+        
+        /* 枕头样式 */
+        .pillow-item {
+            cursor: pointer;
+            transition: all 0.8s cubic-bezier(0.2, 0, 0.2, 1);
+            text-align: center;
+            filter: blur(0px) brightness(1);
+        }
+        .pillow-item:hover {
+            filter: blur(0px) brightness(1.2);
+            transform: scale(1.1);
+        }
+        .pillow-img {
+            width: 190px;
+            height: 190px;
+            object-fit: contain;
+            pointer-events: none;
+        }
+
+        /* 按钮与通用样式 */
+        .btn-dream {
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            color: rgba(255, 255, 255, 0.89);
+            padding: 12px 30px;
+            letter-spacing: 4px;
+            cursor: pointer;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 1.6s cubic-bezier(0.2, 0, 0.2, 1);
+        }
+        .btn-dream.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .btn-dream:hover {
+            background: rgba(255,255,255,0.15);
+            border-color: rgba(255,255,255,0.5);
+            transform: translateY(-2px);
+        }
+        .btn-dream:active {
+            background: rgba(255,255,255,0.25);
+            transform: scale(0.98);
+        }
+
+        /* 枕中梦境舞台 */
+        #dream-world {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            opacity: 0;
+            transition: opacity 4s ease-out;
+        }
+        #dream-world.active {
+            display: flex;
+            opacity: 1;
+        }
+        #macroPillowContainer {
+            position: relative;
+            width: 85vw;
+            height: 75vh;
+        }
+        #macroPillowContainer img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            z-index: 1;
+        }
+        #dreamZone {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 55%;
+            height: 55%;
+            border-radius: 50%;
+            background: 
+                radial-gradient(ellipse at center, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0.7) 30%, rgba(255,255,255,0.4) 55%, rgba(255,255,255,0.1) 80%, transparent 100%),
+                radial-gradient(ellipse at center, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.35) 40%, rgba(255,255,255,0.1) 70%, transparent 100%);
+            overflow: visible;
+            pointer-events: none;
+            z-index: 9998;
+            box-shadow: 
+                0 0 60px 30px rgba(255, 255, 255, 0.2),
+                0 0 120px 60px rgba(255, 255, 255, 0.1),
+                0 0 180px 90px rgba(255, 255, 255, 0.05);
+        }
+        .embedded-item {
+            position: absolute;
+
+            
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+            z-index: 99999;
+            pointer-events: none;
+        }
+        @keyframes dreamFloat {
+            0% {
+                transform: translate(-50%, -50%) translate(0, 0) scale(1);
+            }
+            50% {
+                transform: translate(-50%, -50%) translate(8px, -5px) scale(1.02);
+            }
+            100% {
+                transform: translate(-50%, -50%) translate(0, 0) scale(1);
+            }
+        }
+        @keyframes lightFlicker {
+            0%, 100% { brightness: 1; blur: 0px; }
+            50% { brightness: 1.05; blur: 0.5px; }
+        }
+        #macroPillowContainer:hover img {
+            animation: lightFlicker 0.5s ease-in-out infinite;
+        }
+        #awakeBtn {
+            position: absolute;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-330px);
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            color: rgba(255, 255, 255, 0.89);
+            padding: 10px 20px;
+            font-size: 0.9rem;
+            letter-spacing: 2px;
+            cursor: pointer;
+            opacity: 0;
+            transition: all 0.8s cubic-bezier(0.2, 0, 0.2, 1);
+            width: 260px;
+            text-align: center;
+            white-space: nowrap;
+        }
+        #awakeBtn.visible {
+            opacity: 1;
+            transform: translateX(-330px) translateY(0);
+        }
+        #awakeBtn:hover {
+            opacity: 0.8 !important;
+            background: rgba(255,255,255,0.15);
+        }
+
+        #saveBtn {
+            position: absolute;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(70px);
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.05);
+            backdrop-filter: blur(10px);
+            color: rgba(255, 255, 255, 0.89);
+            padding: 10px 20px;
+            font-size: 0.9rem;
+            letter-spacing: 2px;
+            cursor: pointer;
+            opacity: 0;
+            transition: all 0.8s cubic-bezier(0.2, 0, 0.2, 1);
+            width: 260px;
+            text-align: center;
+            white-space: nowrap;
+        }
+        #saveBtn.visible {
+            opacity: 1;
+            transform: translateX(70px) translateY(0);
+        }
+        #saveBtn:hover {
+            opacity: 0.8 !important;
+            background: rgba(255,255,255,0.15);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app">
+        <!-- 第1页：开场 -->
+        <div class="page active" id="page-1">
+            <h1 class="dream-text" style="font-size: 2.8rem; color: #fff;">身体得到彻底休息的时候 灵魂才会醒来</h1>
+            <button class="btn-dream" style="margin-top: 40px;" onclick="goToPage('page-0')">继续</button>
+        </div>
+
+        <!-- 第2页：枕头导入 -->
+        <div class="page" id="page-0">
+            <h1 class="dream-text" style="font-size: 2.8rem;">选择柔软的枕头有助于睡眠</h1>
+            <button class="btn-dream" style="margin-top: 40px;" onclick="goToPage('page-1-main')">开始选择</button>
+            <button class="btn-dream back-nav" onclick="goToPage('page-1')">返回</button>
+        </div>
+
+        <!-- 第3页：选枕头 -->
+        <div class="page page-split" id="page-1-main">
+            <div class="side-title">
+                <h2 class="dream-text" style="text-align: left; font-size: 3.2rem; margin-bottom: 10px;">挑选你的枕头吧</h2>
+                <h2 class="dream-text" style="text-align: left; font-size: 1.8rem; opacity: 0.7; margin-top: 0;">pick your pillow :)</h2>
+            </div>
+            <div class="right-content">
+                <div id="pillowGrid" class="pillow-grid-container">
+                    <!-- 动态生成枕头 -->
+                </div>
+            </div>
+            <button class="btn-dream back-nav" onclick="goToPage('page-0')">返回</button>
+        </div>
+
+        <!-- 第4页：梦境选择 -->
+        <div class="page page-split" id="page-dream-choice">
+            <div class="side-title">
+                <h2 class="dream-text" style="text-align: left; font-size: 3rem; margin-bottom: 10px;">此时此刻你希望</h2>
+                <h2 class="dream-text" style="text-align: left; font-size: 3rem; opacity: 0.7; margin-top: 0;">梦到什么？</h2>
+            </div>
+            <div class="right-content">
+                <div class="choice-group">
+                    <div style="position: relative; width: 300px;">
+                        <button class="btn-dream" style="width: 100%; padding: 20px; font-size: 1.2rem;" onclick="goToPage('page-3')">我来决定</button>
+                        <p id="dreamHint" style="position: absolute; bottom: -10px; left: 0; right: 0; text-align: center; font-size: 1.1rem; opacity: 0; transition: opacity 0.3s; color: rgba(255,255,255,0.5);">可以选择1-5个物件</p>
+                    </div>
+                    <button class="btn-dream" style="width: 300px; padding: 20px; font-size: 1.2rem;" onclick="goToPage('page-4')">只想睡个好觉</button>
+                </div>
+            </div>
+            <button class="btn-dream back-nav" onclick="goToPage('page-1-main')">返回</button>
+        </div>
+
+        <!-- 第5页：物件云 (重要改动) -->
+        <div class="page" id="page-3" style="background-color: rgba(0, 0, 0, 0.7);">
+            <div class="item-cloud" id="itemCloud"></div>
+            <div style="position:fixed; bottom:50px; z-index:100; text-align:center;">
+                <p id="selectionStatus" class="dream-text" style="font-size: 1.8rem;">选择 1-5 个物件吧 [0/5]</p>
+                <button class="btn-dream" id="toBedroomBtn" style="display:none;" onclick="goToPage('page-4')">带着思绪入梦 →</button>
+            </div>
+            <button class="btn-dream back-nav" onclick="goToPage('page-dream-choice')">返回</button>
+        </div>
+
+        <!-- 第6页：卧室 -->
+        <div class="page" id="page-4">
+            <div class="bedroom-scene" id="bedroom">
+                <div class="lamp-pull" onclick="turnOffLights()">
+                    <svg width="20" height="260"><line x1="10" y1="0" x2="10" y2="240" stroke="white" /><circle cx="10" cy="240" r="10" fill="white" /></svg>
+                </div>
+                <div class="lamp-hint" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); color:#fff; text-align: center;">
+                    <span class="dream-text" style="font-size: 3.2rem; display: block; margin-bottom: 10px; font-weight: bold;">点击上方圆点关灯</span>
+                    <span class="dream-text" style="font-size: 1.8rem; opacity: 0.9; display: block; font-weight: bold;">click to turn off the lights｀ω´</span>
+                </div>
+            </div>
+            <button class="btn-dream back-nav" onclick="goToPage('page-dream-choice')">返回</button>
+        </div>
+
+        <!-- 枕中梦境舞台 -->
+        <!-- 新增：使用 id="dream-world" 作为截图区域 -->
+        <div id="dream-world">
+            <div id="macroPillowContainer"></div>
+            <div id="dreamZone"></div>
+            <button id="awakeBtn">醒来 / AWAKE</button>
+            <button id="saveBtn">将梦境保存到相册</button>
+            <button class="btn-dream back-nav" onclick="goToPage('page-dream-choice')">返回</button>
+        </div>
+    </div>
+
+<script>
+    // 全局变量
+    let selectedPillow = 1;
+    let selectedItems = [];
+    const BACKGROUND_IMAGES_PILLOW = [
+        'background/pillowbg1.jpg',
+        'background/pillowbg2.jpg',
+        'background/pillowbg3.jpg',
+        'background/pillowbg4.jpg',
+        'background/pillowbg5.jpg'
+    ];
+    let currentPillowBgIndex = 0;
+    let particlesContainer = null;
+    let particleAnimations = [];
+    let particlesActive = true;
+
+    // 1. 物件映射表 (严格61个条目)
+    const ITEM_MAP = {
+        1: "青苹果", 2: "烤棉花糖", 3: "乳酪芝士蛋糕", 4: "小房子蜡烛", 5: "奶油蛋糕", 
+        6: "三文鱼寿司", 7: "红苹果", 8: "甜筒", 9: "虾", 10: "章鱼", 
+        11: "海豹", 12: "蜗牛", 13: "兔", 14: "海星", 15: "神秘蜗牛", 
+        16: "蛾子", 17: "海蜗牛", 18: "喜林草", 19: "海螺", 20: "手套", 
+        21: "珠", 22: "波点蝴蝶结", 23: "贝壳", 24: "精灵", 25: "荷包蛋", 
+        26: "不明生物", 27: "小羊", 28: "音乐才是止痛药", 29: "ZZZ DONT wake me up！", 30: "茶壶", 
+        31: "太爱音乐了", 32: "闹钟", 33: "小天使", 34: "钥匙", 35: "扭曲的时间", 
+        36: "这也是全身镜", 37: "美丽的时间", 38: "烛台", 39: "沙漏", 40: "海豚", 
+        41: "这个是全身镜", 42: "珊瑚", 43: "小鸟", 44: "天使蛋糕拓麻歌子", 45: "糖果", 
+        46: "这是我的电子宠物", 47: "拓麻歌子会繁殖", 48: "柔雾紫", 49: "ccd", 50: "蓝蓝蓝", 
+        51: "果冻", 52: "幸福降临我掌心", 53: "捧在手掌心♪", 54: "混沌", 55: "鱼板", 
+        56: "幻觉", 57: "重影", 58: "没有人能拒绝抹茶", 59: "火漆印章", 60: "花", 
+        61: "休息一下"
+    };
+
+    // 2. 文字特效：分词、涟漪出现、鼠标飘散
+    function applyDreamText(element) {
+        const text = element.innerText;
+        element.innerHTML = '';
+        element.style.pointerEvents = 'none'; // 防止文字本身挡住鼠标
+        
+        const chars = text.split('').map((c, i) => {
+            const span = document.createElement('span');
+            span.innerText = c === ' ' ? '\u00A0' : c;
+            span.className = 'char';
+            span.style.transitionDelay = `${Math.random() * 0.5}s`;
+            element.appendChild(span);
+            // 延迟展示涟漪出现效果
+            setTimeout(() => span.classList.add('visible'), 500);
+            return span;
+        });
+
+        // 鼠标移动监听：随风飘散
+        document.addEventListener('mousemove', (e) => {
+            chars.forEach(char => {
+                const rect = char.getBoundingClientRect();
+                const dist = Math.hypot(e.clientX - (rect.left + rect.width/2), e.clientY - (rect.top + rect.height/2));
+                
+                if (dist < 80) {
+                    const angle = Math.atan2(e.clientY - rect.top, e.clientX - rect.left);
+                    const force = (80 - dist) / 1.5;
+                    char.style.transform = `translate(${-Math.cos(angle)*force*3}px, ${-Math.sin(angle)*force*3}px) rotate(${force}deg)`;
+                    char.style.opacity = '0';
+                    char.style.filter = 'blur(10px)';
+                    char.style.transition = 'transform 0.5s ease-out, opacity 2s, filter 2s';
+                } else {
+                    // 2-3秒后像海浪一样重新慢慢出现
+                    setTimeout(() => {
+                        char.style.transform = `translate(0,0) rotate(0deg)`;
+                        char.style.opacity = '0.6';
+                        char.style.filter = 'blur(1px)';
+                        char.style.transition = 'all 2s cubic-bezier(0.2, 0, 0.2, 1)';
+                    }, 2000);
+                }
+            });
+        });
+    }
+
+    // 3. 枕头渲染
+    function initPillowRender() {
+        const grid = document.getElementById('pillowGrid');
+        if (!grid) return;
+
+        // 清空现有的枕头，确保每次进入都重新渲染
+        grid.innerHTML = '';
+
+        for (let i = 1; i <= 10; i++) {
+            const el = document.createElement('div');
+            el.className = 'pillow-item';
+            const imgPath = `images/pillows/pillow${i}.png`;
+            el.innerHTML = `
+                <img src="${imgPath}" class="pillow-img" onerror="this.style.opacity='0.1'; this.nextElementSibling.style.opacity='1';">
+                <p style="font-size:10px; margin-top:15px; opacity: 0; transition: 0.5s;">PILLOW ${i}</p>
+            `;
+            el.onclick = (e) => {
+                e.stopPropagation();
+                selectedPillow = i;
+                goToPage('page-dream-choice');
+            };
+            grid.appendChild(el);
+        }
+    }
+
+    // 4. 物件云初始化
+    function initItemCloud() {
+        const cloud = document.getElementById('itemCloud');
+        if (!cloud) return;
+        
+        // 先清空现有的物件
+        cloud.innerHTML = '';
+        
+        const selectedSet = new Set();
+
+        for(let i=1; i<=61; i++) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'item-wrapper';
+            wrapper.innerHTML = `
+                <img src="images/items/item${i}.png" class="item-img" onerror="this.src='https://via.placeholder.com/100?text=item${i}'">
+                <span class="item-label">${ITEM_MAP[i] || '梦幻物件'}</span>
+            `;
+
+            // 随机分布
+            wrapper.style.left = `${Math.random() * 85 + 5}%`;
+            wrapper.style.top = `${Math.random() * 80 + 5}%`;
+            
+            // 独立的漂浮动效
+            const duration = 15 + Math.random() * 20;
+            wrapper.style.animation = `float ${duration}s ease-in-out infinite`;
+
+            wrapper.onclick = () => {
+                if(selectedSet.has(i)) {
+                    selectedSet.delete(i);
+                    wrapper.style.boxShadow = 'none';
+                } else if(selectedSet.size < 5) {
+                    selectedSet.add(i);
+                    wrapper.style.boxShadow = '0 0 30px rgba(255,255,255,0.4)';
+                }
+                selectedItems = Array.from(selectedSet);
+                document.getElementById('selectionStatus').innerText = `选择 1-5 个物件吧 [${selectedSet.size}/5]`;
+                document.getElementById('toBedroomBtn').style.display = selectedSet.size > 0 ? 'inline-block' : 'none';
+            };
+            cloud.appendChild(wrapper);
+        }
+        
+        // 重置选择状态
+        document.getElementById('selectionStatus').innerText = `选择 1-5 个物件吧 [0/5]`;
+        document.getElementById('toBedroomBtn').style.display = 'none';
+        selectedItems = [];
+    }
+
+    // 重置卧室场景
+    function resetBedroom() {
+        const bedroom = document.getElementById('bedroom');
+        if (bedroom) {
+            bedroom.classList.remove('dark');
+            bedroom.style.opacity = '1';
+            bedroom.style.visibility = 'visible';
+            bedroom.style.filter = '';
+        }
+        
+        // 重置灯和提示文字
+        const lampPull = document.querySelector('.lamp-pull');
+        const lampHint = document.querySelector('.lamp-hint');
+        if (lampPull) {
+            lampPull.style.opacity = '1';
+            lampPull.style.pointerEvents = 'auto';
+            lampPull.style.transform = 'translateX(-50%) translateY(-100%)';
+            lampPull.style.animation = 'lampDrop 2.5s ease-out forwards 1.5s';
+        }
+        if (lampHint) {
+            lampHint.style.opacity = '1';
+        }
+    }
+
+    // 页面跳转逻辑
+    function goToPage(id) {
+        // 获取当前活动页面
+        const currentPage = document.querySelector('.page.active');
+        const currentId = currentPage ? currentPage.id : '';
+        
+        // 先让当前页面的按钮渐隐
+        document.querySelectorAll('.page.active .btn-dream').forEach(btn => {
+            btn.classList.remove('visible');
+        });
+        
+        // 特殊处理：从枕中梦境醒来过渡到挑选枕头页面（3秒淡入淡出）
+        const dreamWorld = document.getElementById('dream-world');
+        const isFromDreamWorld = dreamWorld && dreamWorld.classList.contains('active');
+        
+        if (isFromDreamWorld && id === 'page-1-main') {
+            // 枕中梦境页面已经在淡出，等待它完成后再淡入新页面
+            setTimeout(() => {
+                // 隐藏枕中梦境页面
+                dreamWorld.classList.remove('active');
+                dreamWorld.style.opacity = '1';
+                
+                // 停止粒子效果
+                stopParticles();
+                
+                // 获取目标页面
+                const next = document.getElementById(id);
+                if (next) {
+                    // 先隐藏所有页面
+                    document.querySelectorAll('.page').forEach(p => {
+                        p.classList.remove('active');
+                        p.style.opacity = '0';
+                    });
+                    
+                    // 设置目标页面的过渡效果（3秒淡入）
+                    next.style.transition = 'opacity 3s cubic-bezier(0.4, 0, 0.2, 1)';
+                    next.classList.add('active');
+                    next.style.opacity = '1';
+                    
+                    // 重置卧室页面
+                    resetBedroom();
+                    
+                    // 重新应用文字动画
+                    next.querySelectorAll('.dream-text').forEach(t => applyDreamText(t));
+                    
+                    // 延迟添加按钮渐显效果
+                    setTimeout(() => {
+                        next.querySelectorAll('.btn-dream').forEach((btn, index) => {
+                            setTimeout(() => {
+                                btn.classList.add('visible');
+                            }, index * 150);
+                        });
+                    }, 500);
+                    
+                    // 初始化枕头渲染
+                    initPillowRender();
+                }
+            }, 3000); // 等待枕中梦境页面淡出完成（3秒）
+            return;
+        }
+        
+        // 特殊处理：从 page-0 到 page-1-main 的过渡效果
+        if (currentId === 'page-0' && id === 'page-1-main') {
+            // 让当前页面缓缓变暗
+            currentPage.style.transition = 'opacity 1.5s ease-in-out, filter 1.5s ease-in-out';
+            currentPage.style.opacity = '0';
+            currentPage.style.filter = 'brightness(0.3)';
+            
+            // 等待1.5秒后切换页面
+            setTimeout(() => {
+                document.querySelectorAll('.page').forEach(p => {
+                    p.classList.remove('active');
+                    p.style.transition = 'opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1)';
+                    p.style.filter = '';
+                    p.style.opacity = '0';
+                });
+                
+                const next = document.getElementById(id);
+                if (next) {
+                    next.classList.add('active');
+                    next.style.opacity = '1';
+                }
+                
+                // 重置卧室页面
+                resetBedroom();
+                
+                // 停止粒子效果
+                stopParticles();
+                
+                // 重新应用该页面的文字动画
+                if (next) {
+                    next.querySelectorAll('.dream-text').forEach(t => applyDreamText(t));
+                    
+                    // 延迟添加按钮渐显效果
+                    setTimeout(() => {
+                        next.querySelectorAll('.btn-dream').forEach((btn, index) => {
+                            setTimeout(() => {
+                                btn.classList.add('visible');
+                            }, index * 150);
+                        });
+                    }, 300);
+                    
+                    initPillowRender();
+                }
+            }, 1500);
+            return;
+        }
+        
+        // 普通页面过渡
+        setTimeout(() => {
+            // 移除所有页面的 active 类
+            document.querySelectorAll('.page').forEach(p => {
+                p.classList.remove('active');
+                p.style.opacity = '0';
+            });
+            
+            const next = document.getElementById(id);
+            if (next) {
+                next.classList.add('active');
+                next.style.opacity = '1';
+            }
+            
+            // 隐藏枕中梦境页面
+            const dreamWorld = document.getElementById('dream-world');
+            if (dreamWorld) {
+                dreamWorld.classList.remove('active');
+                const oldItems = dreamWorld.querySelectorAll('.embedded-item');
+                oldItems.forEach(item => item.remove());
+            }
+            
+            // 重置卧室页面（只有当页面不是卧室页面时才重置）
+            if (id !== 'page-4') {
+                resetBedroom();
+            }
+            
+            // 停止粒子效果
+            stopParticles();
+            
+            // 重新应用该页面的文字动画
+            if (next) {
+                next.querySelectorAll('.dream-text').forEach(t => applyDreamText(t));
+                
+                // 延迟添加按钮渐显效果
+                setTimeout(() => {
+                    next.querySelectorAll('.btn-dream').forEach((btn, index) => {
+                        setTimeout(() => {
+                            btn.classList.add('visible');
+                        }, index * 150);
+                    });
+                }, 300);
+                
+                // 只有进入这些页面时才初始化内容
+                if(id === 'page-1-main') initPillowRender();
+                if(id === 'page-3') initItemCloud();
+            }
+        }, 400); // 等待按钮渐隐动画完成
+    }
+
+    // 关灯动画
+    function turnOffLights() {
+        const bedroom = document.getElementById('bedroom');
+        const lampPull = document.querySelector('.lamp-pull');
+        const lampHint = document.querySelector('.lamp-hint');
+        
+        bedroom.classList.add('dark');
+        
+        // 隐藏灯和提示文字
+        if (lampPull) {
+            lampPull.style.opacity = '0';
+            lampPull.style.pointerEvents = 'none';
+        }
+        if (lampHint) {
+            lampHint.style.opacity = '0';
+        }
+        
+        // 4秒后（变暗动画完成）启动粒子系统，保持卧室场景
+        // 全黑1秒后再进入枕中梦境
+        setTimeout(() => {
+            createParticles();
+            
+            // 全黑1秒后进入枕中梦境
+            setTimeout(() => {
+                bedroom.style.opacity = '0';
+                bedroom.style.visibility = 'hidden';
+                enterPillowWorld();
+            }, 1000);
+        }, 4000);
+    }
+
+    function enterPillowWorld() {
+        const dreamWorld = document.getElementById('dream-world');
+        document.body.classList.add('pillow-world-active');
+        
+        // 清理之前添加的物件元素
+        const oldItems = dreamWorld.querySelectorAll('.embedded-item');
+        oldItems.forEach(item => item.remove());
+        
+        // 设置背景图片
+        const initialBg = BACKGROUND_IMAGES_PILLOW[0];
+        dreamWorld.style.backgroundImage = `url('${initialBg}')`;
+        
+        const macroPillowContainer = document.getElementById('macroPillowContainer');
+        const pillowImg = document.createElement('img');
+        pillowImg.crossOrigin = 'anonymous'; // 添加跨域声明
+        pillowImg.src = `images/pillows/pillow${selectedPillow}.png`;
+        pillowImg.onerror = function() {
+            this.src = 'https://via.placeholder.com/200';
+        };
+        macroPillowContainer.innerHTML = '';
+        macroPillowContainer.appendChild(pillowImg);
+        
+        const dreamZone = document.getElementById('dreamZone');
+        dreamZone.innerHTML = '';
+        
+        // 先添加到 DOM（触发 CSS transition）
+        dreamWorld.classList.add('active');
+        
+        // 2秒后开始显示内容
+        setTimeout(() => {
+            // 显示物件
+            const itemCount = selectedItems.length;
+            
+            // 获取 dreamZone 的位置和尺寸，用于计算物件应该显示的区域
+            const dreamZoneRect = dreamZone.getBoundingClientRect();
+            const dreamWorldRect = dreamWorld.getBoundingClientRect();
+            
+            // 计算 dreamZone 在 dreamWorld 内的相对位置
+            const dreamZoneLeft = dreamZoneRect.left - dreamWorldRect.left;
+            const dreamZoneTop = dreamZoneRect.top - dreamWorldRect.top;
+            
+            const containerWidth = dreamZone.offsetWidth;
+            const containerHeight = dreamZone.offsetHeight;
+            const centerX = dreamZoneLeft + containerWidth * 0.5;
+            const centerY = dreamZoneTop + containerHeight * 0.5;
+            
+            // 存储已放置物件的位置和大小，用于碰撞检测
+            const placedItems = [];
+            
+            // 3mm 转换为像素（假设 96 DPI，3mm ≈ 11.8px）
+            const minSpacing = 11.8;
+            
+            // 计算椭圆的范围半径
+            const ellipseRangeX = containerWidth * 0.4;
+            const ellipseRangeY = containerHeight * 0.4;
+            
+            // 从中心向外扩散的布局函数（更随机）
+            function getConcentricPositions(count) {
+                const positions = [];
+                
+                // 先放中心
+                positions.push({ x: 0, y: 0 });
+                
+                if (count === 1) {
+                    return positions;
+                }
+                
+                let remaining = count - 1;
+                let ring = 1;
+                
+                while (remaining > 0) {
+                    const maxInThisRing = 6 * ring;
+                    const inThisRing = Math.min(remaining, maxInThisRing);
+                    
+                    for (let i = 0; i < inThisRing; i++) {
+                        // 更大的随机角度偏移，避免水平线排列
+                        const angle = (i / inThisRing) * 2 * Math.PI + (Math.random() - 0.5) * 0.6;
+                        // 更大的随机半径偏移
+                        const radius = ring * 40 + (Math.random() - 0.5) * 20;
+                        positions.push({
+                            x: Math.cos(angle) * radius,
+                            y: Math.sin(angle) * radius
+                        });
+                    }
+                    
+                    remaining -= inThisRing;
+                    ring++;
+                }
+                
+                return positions;
+            }
+            
+            const allPositions = getConcentricPositions(itemCount);
+            
+            selectedItems.forEach((itemId, index) => {
+                const item = document.createElement('img');
+                item.className = 'embedded-item';
+                item.crossOrigin = 'anonymous'; // 添加跨域声明
+                item.src = `images/items/item${itemId}.png`;
+                item.onerror = function() {
+                    this.src = 'https://via.placeholder.com/100';
+                };
+                
+                // 物件大小（固定大小以确保均匀分布）
+                const size = 106;
+                
+                const pos = allPositions[index];
+                let finalX = centerX + pos.x;
+                let finalY = centerY + pos.y;
+                
+                // 确保物件在椭圆范围内
+                const maxRadiusX = ellipseRangeX - size / 2 - minSpacing;
+                const maxRadiusY = ellipseRangeY - size / 2 - minSpacing;
+                
+                const ellipseRatio = (pos.x * pos.x) / (maxRadiusX * maxRadiusX) + (pos.y * pos.y) / (maxRadiusY * maxRadiusY);
+                if (ellipseRatio > 1) {
+                    const scale = 1 / Math.sqrt(ellipseRatio);
+                    finalX = centerX + pos.x * scale;
+                    finalY = centerY + pos.y * scale;
+                }
+                
+                // 检测碰撞
+                let collision = false;
+                for (const placedItem of placedItems) {
+                    const distance = Math.sqrt(
+                        Math.pow(finalX - placedItem.x, 2) + 
+                        Math.pow(finalY - placedItem.y, 2)
+                    );
+                    const minDistance = (size + placedItem.size) / 2 + minSpacing;
+                    
+                    if (distance < minDistance) {
+                        collision = true;
+                        break;
+                    }
+                }
+                
+                // 碰撞调整
+                if (collision) {
+                    let adjusted = false;
+                    for (let r = 1; r < 15 && !adjusted; r++) {
+                        for (let angle = 0; angle < 2 * Math.PI && !adjusted; angle += Math.PI / 18) {
+                            const testX = finalX + Math.cos(angle) * r * 10;
+                            const testY = finalY + Math.sin(angle) * r * 10;
+                            
+                            const dx = (testX - centerX) / (ellipseRangeX - size / 2 - minSpacing);
+                            const dy = (testY - centerY) / (ellipseRangeY - size / 2 - minSpacing);
+                            if (dx * dx + dy * dy > 1) continue;
+                            
+                            let canPlace = true;
+                            for (const placedItem of placedItems) {
+                                const distance = Math.sqrt(
+                                    Math.pow(testX - placedItem.x, 2) + 
+                                    Math.pow(testY - placedItem.y, 2)
+                                );
+                                const minDistance = (size + placedItem.size) / 2 + minSpacing;
+                                if (distance < minDistance) {
+                                    canPlace = false;
+                                    break;
+                                }
+                            }
+                            
+                            if (canPlace) {
+                                finalX = testX;
+                                finalY = testY;
+                                adjusted = true;
+                            }
+                        }
+                    }
+                }
+                
+                item.style.left = `${finalX}px`;
+                item.style.top = `${finalY}px`;
+                item.style.width = `${size}px`;
+                item.style.height = 'auto';
+                item.style.objectFit = 'contain';
+                
+                // 设置初始状态：透明、模糊（朦胧效果）
+                item.style.opacity = '0';
+                item.style.filter = `blur(${20 + Math.random() * 15}px)`; // 随机模糊20-35px
+                item.style.transform = 'translate(-50%, -50%) scale(1)'; // 保持原大小，去除放大动画
+                item.style.transition = 'all 0s';
+                
+                // 将物件添加到 dreamWorld
+                dreamWorld.appendChild(item);
+                
+                // 延迟后开始浮现动画（由朦胧到清晰）
+                setTimeout(() => {
+                    // 随机动画时长 2.5-4秒
+                    const animDuration = 2.5 + Math.random() * 1.5;
+                    item.style.transition = `opacity ${animDuration}s ease-out, filter ${animDuration * 1.2}s ease-out`;
+                    item.style.opacity = '1';
+                    item.style.filter = 'blur(0px)'; // 最后一帧完全清晰
+                    
+                    // 创建魔幻粒子效果
+                    createMagicParticles(finalX, finalY);
+                }, index * 600 + 1500); // 延迟增加，每个物件间隔600ms，初始延迟1500ms
+                
+                // 记录已放置的物件位置和大小
+                placedItems.push({ x: finalX, y: finalY, size: size });
+            });
+        }, 100);
+        
+        // 醒来按钮和保存按钮出现时间：提前7秒
+        const btnDelay = selectedItems.length > 0 ? 5000 : 1000;
+        setTimeout(() => {
+            const awakeBtn = document.getElementById('awakeBtn');
+            const saveBtn = document.getElementById('saveBtn');
+            awakeBtn.classList.add('visible');
+            saveBtn.classList.add('visible');
+        }, btnDelay);
+        
+        // 醒来按钮点击事件（立即绑定，不延迟）
+        const awakeBtn = document.getElementById('awakeBtn');
+        
+        awakeBtn.addEventListener('click', () => {
+            // 停止粒子效果
+            stopParticles();
+            
+            // 物件化为粒子效果
+            const items = document.querySelectorAll('.embedded-item');
+            items.forEach((item, index) => {
+                setTimeout(() => {
+                    createItemParticles(item);
+                    item.style.transition = 'all 1s ease';
+                    item.style.opacity = '0';
+                }, index * 150);
+            });
+            
+            // 枕头慢慢淡出（1.5秒）
+            const macroPillow = document.querySelector('#macroPillowContainer img');
+            if (macroPillow) {
+                macroPillow.style.transition = 'opacity 1.5s ease-out';
+                macroPillow.style.opacity = '0';
+            }
+            
+            // 整个页面柔和地亮起并淡出（3秒动画）
+            const dreamWorld = document.getElementById('dream-world');
+            dreamWorld.style.transition = 'opacity 3s cubic-bezier(0.4, 0, 0.2, 1)';
+            dreamWorld.style.opacity = '0';
+            
+            // 3秒后过渡到挑选枕头页面
+            setTimeout(() => {
+                document.body.classList.remove('pillow-world-active');
+                dreamWorld.classList.remove('active');
+                dreamWorld.style.opacity = '1';
+                
+                if (macroPillow) {
+                    macroPillow.style.opacity = '1';
+                }
+                
+                goToPage('page-1-main');
+            }, 3000);
+        });
+        
+        // 保存到相册按钮点击事件（使用 html2canvas 实现）
+        const saveBtn = document.getElementById('saveBtn');
+        saveBtn.addEventListener('click', function() {
+            // 检查 html2canvas 是否加载
+            if (typeof html2canvas === 'undefined') {
+                alert('html2canvas 加载失败，请刷新页面重试');
+                return;
+            }
+            
+            // 获取精确的页面尺寸
+            const pageWidth = document.body.clientWidth;
+            const pageHeight = document.body.clientHeight;
+            
+            // 获取控制按钮区域并隐藏（使用 opacity 而非 display，保持DOM占位）
+            const dreamControls = document.querySelector('.dream-controls');
+            const awakeBtn = document.getElementById('awakeBtn');
+            const saveBtnElement = document.getElementById('saveBtn');
+            
+            // 保存原始样式
+            const originalDreamControlsOpacity = dreamControls ? dreamControls.style.opacity : '';
+            const originalAwakeBtnOpacity = awakeBtn ? awakeBtn.style.opacity : '';
+            const originalSaveBtnOpacity = saveBtnElement ? saveBtnElement.style.opacity : '';
+            
+            // 隐藏控制按钮
+            if (dreamControls) dreamControls.style.opacity = '0';
+            if (awakeBtn) awakeBtn.style.opacity = '0';
+            if (saveBtnElement) saveBtnElement.style.opacity = '0';
+            
+            // 使用 html2canvas 截图整个 document.body
+            html2canvas(document.body, {
+                scale: 2, // 必须设置为2，确保清晰度
+                useCORS: true, // 必须，防止跨域导致图片丢失
+                allowTaint: false, // 不允许污染canvas
+                backgroundColor: null, // 保留原有背景
+                logging: false, // 关闭日志
+                foreignObjectRendering: false, // 禁用 foreignObject 渲染
+                scrollX: 0, // 确保坐标对齐
+                scrollY: 0, // 确保坐标对齐
+                width: pageWidth, // 显式指定宽度，防止拉伸
+                height: pageHeight, // 显式指定高度，防止拉伸
+                imageTimeout: 10000, // 延长图片加载超时时间
+                removeContainer: false, // 不移除临时容器
+                onclone: function(clonedDoc) {
+                    // 修复枕头图片拉伸问题：手动获取原始图片尺寸并强制赋给克隆元素
+                    const originalPillowImg = document.querySelector('#macroPillowContainer img');
+                    const clonedPillowImg = clonedDoc.querySelector('#macroPillowContainer img');
+                    if (originalPillowImg && clonedPillowImg) {
+                        clonedPillowImg.style.width = originalPillowImg.offsetWidth + 'px';
+                        clonedPillowImg.style.height = originalPillowImg.offsetHeight + 'px';
+                        clonedPillowImg.style.maxWidth = 'none';
+                        clonedPillowImg.style.maxHeight = 'none';
+                    }
+                    
+                    // 确保克隆的容器宽度正确
+                    const clonedDreamWorld = clonedDoc.getElementById('dream-world');
+                    if (clonedDreamWorld) {
+                        clonedDreamWorld.style.width = window.innerWidth + 'px';
+                        clonedDreamWorld.style.height = window.innerHeight + 'px';
+                    }
+                }
+            }).then(function(canvas) {
+                // 恢复控制按钮显示
+                if (dreamControls) dreamControls.style.opacity = originalDreamControlsOpacity;
+                if (awakeBtn) awakeBtn.style.opacity = originalAwakeBtnOpacity;
+                if (saveBtnElement) saveBtnElement.style.opacity = originalSaveBtnOpacity;
+                
+                // 生成文件名：枕头你替记得_日期.png
+                const today = new Date();
+                const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`;
+                const fileName = `枕头你替记得_${dateStr}.png`;
+                
+                // 使用 toBlob 替代 toDataURL，避免跨域问题
+                canvas.toBlob(function(blob) {
+                    if (blob) {
+                        // 创建下载链接
+                        const link = document.createElement('a');
+                        link.download = fileName;
+                        link.href = URL.createObjectURL(blob);
+                        
+                        // 确保链接被添加到DOM
+                        document.body.appendChild(link);
+                        
+                        // 触发下载
+                        link.click();
+                        
+                        // 清理
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(link.href);
+                        
+                        // 显示保存成功提示
+                        alert('梦境已保存到相册！');
+                    } else {
+                        alert('图片生成失败，请重试');
+                    }
+                }, 'image/png');
+            }).catch(function(error) {
+                // 恢复控制按钮显示（即使出错）
+                if (dreamControls) dreamControls.style.opacity = originalDreamControlsOpacity;
+                if (awakeBtn) awakeBtn.style.opacity = originalAwakeBtnOpacity;
+                if (saveBtnElement) saveBtnElement.style.opacity = originalSaveBtnOpacity;
+                
+                console.error('截图失败:', error);
+                alert('保存失败，请重试。错误信息: ' + error.message);
+            });
+        });
+    }
+
+    // 魔幻粒子效果函数（物件浮现时的粒子效果）
+    function createMagicParticles(x, y) {
+        const particlesContainer = document.createElement('div');
+        particlesContainer.style.position = 'absolute';
+        particlesContainer.style.left = '0';
+        particlesContainer.style.top = '0';
+        particlesContainer.style.width = '100%';
+        particlesContainer.style.height = '100%';
+        particlesContainer.style.pointerEvents = 'none';
+        particlesContainer.style.zIndex = '9999';
+        
+        document.getElementById('dream-world').appendChild(particlesContainer);
+        
+        // 创建多个魔幻粒子
+        for (let i = 0; i < 12; i++) {
+            const particle = document.createElement('div');
+            particle.style.position = 'absolute';
+            particle.style.left = `${x}px`;
+            particle.style.top = `${y}px`;
+            particle.style.width = `${Math.random() * 6 + 2}px`;
+            particle.style.height = particle.style.width;
+            particle.style.borderRadius = '50%';
+            particle.style.background = `radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(255,200,255,0.4) 50%, transparent 100%)`;
+            particle.style.boxShadow = '0 0 10px rgba(255,200,255,0.6), 0 0 20px rgba(200,150,255,0.4)';
+            particle.style.opacity = '0';
+            
+            particlesContainer.appendChild(particle);
+            
+            // 粒子扩散动画
+            setTimeout(() => {
+                const angle = (i / 12) * 2 * Math.PI + Math.random() * 0.5;
+                const distance = Math.random() * 60 + 30;
+                const endX = Math.cos(angle) * distance;
+                const endY = Math.sin(angle) * distance;
+                
+                particle.style.transition = `all 1.5s cubic-bezier(0.2, 0.8, 0.2, 1)`;
+                particle.style.opacity = '1';
+                particle.style.transform = `translate(${endX}px, ${endY}px) scale(0)`;
+            }, 10);
+            
+            // 移除粒子
+            setTimeout(() => {
+                particle.remove();
+            }, 1600);
+        }
+        
+        // 3秒后移除容器
+        setTimeout(() => {
+            particlesContainer.remove();
+        }, 3000);
+    }
+    
+    // 物件化为粒子效果函数
+    function createItemParticles(item) {
+        // 获取物件位置
+        const rect = item.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        
+        // 创建粒子容器
+        const itemParticlesContainer = document.createElement('div');
+        itemParticlesContainer.style.position = 'fixed';
+        itemParticlesContainer.style.inset = '0';
+        itemParticlesContainer.style.pointerEvents = 'none';
+        itemParticlesContainer.style.zIndex = '1002';
+        document.body.appendChild(itemParticlesContainer);
+        
+        // 创建20个粒子
+        for (let i = 0; i < 20; i++) {
+            const particle = document.createElement('div');
+            particle.style.position = 'absolute';
+            particle.style.width = `${Math.random() * 8 + 4}px`;
+            particle.style.height = `${Math.random() * 8 + 4}px`;
+            particle.style.background = `rgba(255, 255, 255, ${Math.random() * 0.8 + 0.2})`;
+            particle.style.borderRadius = '50%';
+            particle.style.left = `${centerX}px`;
+            particle.style.top = `${centerY}px`;
+            particle.style.opacity = '1';
+            particle.style.transform = 'translate(-50%, -50%) scale(1)';
+            itemParticlesContainer.appendChild(particle);
+            
+            // 随机方向和速度
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 100 + 50;
+            const distance = Math.random() * 200 + 100;
+            const translateX = Math.cos(angle) * distance;
+            const translateY = Math.sin(angle) * distance;
+            
+            // 动画
+            setTimeout(() => {
+                particle.style.transition = `all ${Math.random() * 2 + 1}s ease-out`;
+                particle.style.transform = `translate(calc(-50% + ${translateX}px), calc(-50% + ${translateY}px)) scale(0)`;
+                particle.style.opacity = '0';
+            }, 10);
+        }
+        
+        // 3秒后移除容器
+        setTimeout(() => {
+            if (itemParticlesContainer.parentNode) {
+                itemParticlesContainer.parentNode.removeChild(itemParticlesContainer);
+            }
+        }, 3000);
+    }
+
+    // 粒子效果函数
+    function createParticles() {
+        particlesContainer = document.createElement('div');
+        particlesContainer.style.position = 'fixed';
+        particlesContainer.style.inset = '0';
+        particlesContainer.style.pointerEvents = 'none';
+        particlesContainer.style.zIndex = '1001';
+        document.body.appendChild(particlesContainer);
+        
+        particlesActive = true;
+        
+        for (let i = 0; i < 150; i++) {
+            const particle = document.createElement('div');
+            particle.style.position = 'absolute';
+            particle.style.width = `${Math.random() * 13 + 2}px`;
+            particle.style.height = `${Math.random() * 13 + 2}px`;
+            particle.style.background = `rgba(255, 255, 255, ${Math.random() * 0.5 + 0.3})`;
+            particle.style.borderRadius = '50%';
+            particle.style.left = `${Math.random() * 100}%`;
+            particle.style.top = `${Math.random() * 100}%`;
+            particle.style.filter = `blur(${Math.random() * 4 + 1}px)`;
+            particle.style.boxShadow = `0 0 ${Math.random() * 20 + 10}px ${Math.random() * 10 + 5}px rgba(255, 255, 255, ${Math.random() * 0.3 + 0.2})`;
+            particle.style.opacity = '0';
+            particlesContainer.appendChild(particle);
+            
+            let animationId = null;
+            
+            function animate() {
+                if (!particlesActive) {
+                    return;
+                }
+                
+                // 随机位置
+                particle.style.left = `${Math.random() * 100}%`;
+                particle.style.top = `${Math.random() * 100}%`;
+                
+                // 随机大小
+                const size = Math.random() * 13 + 2;
+                particle.style.width = `${size}px`;
+                particle.style.height = `${size}px`;
+                
+                // 随机透明度（闪烁效果）
+                const opacity = Math.random() * 0.5 + 0.3;
+                particle.style.opacity = opacity.toString();
+                
+                // 随机模糊
+                const blur = Math.random() * 4 + 1;
+                particle.style.filter = `blur(${blur}px)`;
+                
+                // 随机光晕
+                const shadowSize = Math.random() * 20 + 10;
+                const shadowBlur = Math.random() * 10 + 5;
+                const shadowOpacity = Math.random() * 0.3 + 0.2;
+                particle.style.boxShadow = `0 0 ${shadowSize}px ${shadowBlur}px rgba(255, 255, 255, ${shadowOpacity})`;
+                
+                // 随机延迟后再次更新（宇宙星空般缓慢闪烁）
+                setTimeout(() => {
+                    animationId = requestAnimationFrame(animate);
+                }, Math.random() * 2000 + 4000);
+            }
+            
+            particleAnimations.push({
+                particle: particle,
+                animationId: animationId
+            });
+            
+            setTimeout(() => {
+                animate();
+            }, i * 50);
+        }
+    }
+
+    // 停止粒子效果函数
+    function stopParticles() {
+        particlesActive = false;
+        
+        // 停止所有动画
+        particleAnimations.forEach(p => {
+            if (p.animationId) {
+                cancelAnimationFrame(p.animationId);
+            }
+        });
+        
+        // 如果有粒子容器则处理
+        if (particlesContainer && particlesContainer.parentNode) {
+            // 3秒后缓缓闪烁消失
+            const particles = particlesContainer.querySelectorAll('div');
+            particles.forEach((particle, index) => {
+                setTimeout(() => {
+                    particle.style.transition = 'opacity 3s ease';
+                    particle.style.opacity = '0';
+                }, index * 10);
+            });
+            
+            // 3.5秒后移除粒子容器
+            setTimeout(() => {
+                if (particlesContainer && particlesContainer.parentNode) {
+                    particlesContainer.parentNode.removeChild(particlesContainer);
+                }
+                particleAnimations = [];
+            }, 3500);
+        } else {
+            particleAnimations = [];
+        }
+    }
+
+    // 初始启动
+    window.onload = () => {
+        // 只在刷新时随机选择一个背景，所有页面共用
+        const bgNumber = Math.floor(Math.random() * 7) + 1;
+        const randomBg = `url('images/background/bg${bgNumber}.jpg')`;
+        
+        const pages = ['page-1', 'page-0', 'page-1-main', 'page-dream-choice', 'page-3', 'page-4'];
+        pages.forEach(pageId => {
+            const page = document.getElementById(pageId);
+            if (page) {
+                page.style.backgroundImage = randomBg;
+            }
+        });
+        
+        applyDreamText(document.querySelector('.dream-text'));
+        
+        // 为当前显示的页面的按钮添加渐显效果
+        setTimeout(() => {
+            document.querySelectorAll('.page.active .btn-dream').forEach((btn, index) => {
+                setTimeout(() => {
+                    btn.classList.add('visible');
+                }, index * 150);
+            });
+        }, 300);
+        
+        // 添加悬停提示效果
+        const dreamBtn = document.querySelector('#page-dream-choice .btn-dream:first-child');
+        const dreamHint = document.getElementById('dreamHint');
+        if (dreamBtn && dreamHint) {
+            dreamBtn.addEventListener('mouseenter', () => {
+                dreamHint.style.opacity = '1';
+            });
+            dreamBtn.addEventListener('mouseleave', () => {
+                dreamHint.style.opacity = '0';
+            });
+        }
+
+        // 全局背景切换功能 - 空格键切换
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                const dreamWorld = document.getElementById('dream-world');
+                if (dreamWorld.classList.contains('active')) {
+                    e.preventDefault();
+                    currentPillowBgIndex = (currentPillowBgIndex + 1) % BACKGROUND_IMAGES_PILLOW.length;
+                    const newBg = BACKGROUND_IMAGES_PILLOW[currentPillowBgIndex];
+                    
+                    dreamWorld.style.transition = 'filter 0.3s ease';
+                    dreamWorld.style.filter = 'brightness(1.5)';
+                    
+                    setTimeout(() => {
+                        dreamWorld.style.backgroundImage = `url('${newBg}')`;
+                        dreamWorld.style.filter = 'brightness(1)';
+                    }, 300);
+                }
+            }
+        });
+    };
+
+</script>
+</body>
+</html>
